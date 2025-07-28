@@ -12,7 +12,7 @@ mongoose.connection.on('connected', () => {
   console.log(`Connected to MongoDB ${mongoose.connection.name}.`);
 });
 
-app.use(cors());
+app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
 app.use(logger('dev'));
 
@@ -22,7 +22,7 @@ const userRouter = require('./controllers/users');
 const hootsRouter = require("./controllers/hoots.js");
 
 app.use('/auth', authRouter);
-app.use('/user', userRouter);
+app.use('/users', userRouter);
 app.use('/test-jwt', testJwtRouter);
 app.use("/hoots", hootsRouter);
 

@@ -7,9 +7,10 @@ router.get('/',verifyToken,  async (req, res) => {
   try {
     // Get a list of all users, but only return their username and _id
     const users = await User.find({}, "username");
-
+    console.log("users", users)
     res.json(users);
   } catch (err) {
+    console.log(err.message)
     res.status(500).json({ err: err.message });
   }
 });
