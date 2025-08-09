@@ -67,9 +67,9 @@ router.get('/', verifyToken, async (req, res) => {
   try {
     const { page = 1, limit = 20, q, instructor, from, to, sort = '-createdAt' } = req.query;
     const filter = {};
+    filter.owner = req.user._id
 
     if (q) filter.$text = { $search: q };
-
     if (instructor) {
       // match string IDs directly; also allow rate map key presence
       filter.$or = [

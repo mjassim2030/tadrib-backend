@@ -122,6 +122,7 @@ const CourseSchema = new Schema(
 
     // Ownership / auditing (optional)
     owner: { type: Schema.Types.ObjectId, ref: 'User' },
+
   },
   {
     timestamps: true,
