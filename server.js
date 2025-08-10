@@ -6,7 +6,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const logger = require('morgan');
 
-mongoose.connect(process.env.MONGODB_URI);
+mongoose.connect(process.env.DB_URL);
 
 mongoose.connection.on('connected', () => {
   console.log(`Connected to MongoDB ${mongoose.connection.name}.`);
@@ -14,20 +14,13 @@ mongoose.connection.on('connected', () => {
 
 const port = process.env.PORT ? process.env.PORT : "3000";
 
+
+app.use(cors({ origin: ['https://YOUR_FRONTEND_DOMAIN'], credentials: true }));
+
 const allowedOrigins = [
   'http://localhost:5173',
   'https://sparktadrib.onrender.com'
 ];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  }
-}));
 
 app.use(express.json());
 app.use(logger('dev'));
@@ -38,11 +31,16 @@ const userRouter = require('./controllers/users');
 const courseRouter = require("./controllers/courses.js");
 const instructorRouter = require("./controllers/instructors.js");
 
+// GET
+app.get('/healthz', (req, res) => res.status(200).json({ status: 'ok' }));
+
+
 app.use('/auth', authRouter);
 app.use('/users', userRouter);
 app.use('/test-jwt', testJwtRouter);
 app.use("/courses", courseRouter);
 app.use("/instructors", instructorRouter);
+
 
 app.listen(port, () => {
   console.log(`The express app is ready and running on port ${port}!`);
