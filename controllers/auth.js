@@ -7,6 +7,9 @@ const jwt = require('jsonwebtoken');
 
 const saltRounds = 12;
 
+router.get('/sign-in', (_, res) => res.sendStatus(405));
+router.get('/sign-up',  (_, res) => res.sendStatus(405));
+
 router.post('/sign-up', async (req, res) => {
   try {
     const userInDatabase = await User.findOne({ username: req.body.username });
