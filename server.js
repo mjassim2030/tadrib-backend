@@ -13,7 +13,6 @@ mongoose.connection.on('connected', () => {
 });
 
 
-
 const allowedOrigins = [
   'http://localhost:5173',
   'https://sparktadrib.onrender.com'

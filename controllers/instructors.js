@@ -9,6 +9,7 @@ router.get('/', verifyToken, async (req, res, next) => {
   try {
     const { q } = req.query;
     const filter = q ? { name: new RegExp(q, 'i') } : {};
+    filter.owner = req.user._id
     const items = await Instructor.find(filter).sort({ createdAt: -1 });
     res.json(items);
   } catch (err) { next(err); }
@@ -26,6 +27,7 @@ router.get('/:id', verifyToken, async (req, res, next) => {
 // POST /api/instructors
 router.post('/', verifyToken, async (req, res, next) => {
   try {
+    if (req.user?._id) req.body.owner = req.user._id;
     const doc = await Instructor.create(req.body);
     res.status(201).json(doc);
   } catch (err) { next(err); }
