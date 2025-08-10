@@ -15,12 +15,20 @@ mongoose.connection.on('connected', () => {
 const port = process.env.PORT ? process.env.PORT : "8080";
 
 
-app.use(cors({ origin: ['https://whale-app-2vav2.ondigitalocean.app/'], credentials: true }));
-
 const allowedOrigins = [
   'http://localhost:5173',
-  'https://sparktadrib.onrender.com'
+  'https://whale-app-2vav2.ondigitalocean.app'
 ];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
 
 app.use(express.json());
 app.use(logger('dev'));
