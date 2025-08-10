@@ -43,7 +43,9 @@ const instructorRouter = require("./controllers/instructors.js");
 // GET
 app.get('/healthz', (req, res) => res.status(200).json({ status: 'ok' }));
 
-app.use('/', authRouter);
+app.use('/sign-in', authRouter);
+app.use('/sign-up', authRouter);
+
 app.use('/auth', authRouter);
 app.use('/users', userRouter);
 app.use('/test-jwt', testJwtRouter);
