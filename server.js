@@ -15,7 +15,7 @@ mongoose.connection.on('connected', () => {
 const port = process.env.PORT ? process.env.PORT : "8080";
 
 
-app.use(cors({ origin: ['https://YOUR_FRONTEND_DOMAIN'], credentials: true }));
+app.use(cors({ origin: ['https://whale-app-2vav2.ondigitalocean.app/'], credentials: true }));
 
 const allowedOrigins = [
   'http://localhost:5173',
