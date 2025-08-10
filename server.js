@@ -12,6 +12,7 @@ mongoose.connection.on('connected', () => {
   console.log(`Connected to MongoDB ${mongoose.connection.name}.`);
 });
 
+const port = process.env.PORT ? process.env.PORT : "3000";
 
 const allowedOrigins = [
   'http://localhost:5173',
@@ -43,6 +44,6 @@ app.use('/test-jwt', testJwtRouter);
 app.use("/courses", courseRouter);
 app.use("/instructors", instructorRouter);
 
-app.listen(3000, () => {
-  console.log('The express app is ready and running on port 3000!');
+app.listen(port, () => {
+  console.log(`The express app is ready and running on port ${port}!`);
 });
