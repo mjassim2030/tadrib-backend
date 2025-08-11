@@ -4,6 +4,7 @@ const Course = require('../models/course');
 const Instructor = require('../models/instructor');
 const User = require('../models/user');
 const verifyToken = require('../middleware/verify-token');
+const requireAuth = require('../middleware/requireAuth');
 
 const router = express.Router();
 
@@ -12,6 +13,52 @@ function addDays(d, n) {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
   return x;
+}
+
+async function resolveInstructorIdForUser(userId) {
+  // 1) direct link via Instructor.user
+  const linked = await Instructor.findOne({ user: userId }).select('_id').lean();
+  if (linked) return String(linked._id);
+
+  // 2) fallback: username is the email
+  const u = await User.findById(userId).select('username').lean();
+  const uname = (u?.username || '').trim().toLowerCase();
+  if (!uname) return null;
+
+  const byEmail = await Instructor.findOne({ email: uname }).select('_id').lean();
+  return byEmail ? String(byEmail._id) : null;
+}
+
+async function canViewCourse(req, res, next) {
+  try {
+    const userId = String(req.user?._id || '');
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
+    const isAdmin = roles.some(r => ['owner','admin','manager','staff'].includes(String(r).toLowerCase()));
+
+    const course = await Course.findById(req.params.id)
+      .select('owner instructors enrolled')
+      .lean();
+    if (!course) return res.status(404).json({ error: 'Not found' });
+
+    if (isAdmin) return next();
+    if (String(course.owner || '') === userId) return next();
+
+    const myInstructorId = await resolveInstructorIdForUser(userId);
+    if (myInstructorId && (course.instructors || []).map(String).includes(myInstructorId)) {
+      return next();
+    }
+
+    // Optional: allow enrolled students
+    if ((course.enrolled || []).some(s => String(s.user || s) === userId)) {
+      return next();
+    }
+
+    return res.status(403).json({ error: 'Forbidden' });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Auth check failed' });
+  }
 }
 
 function buildSessions({ start_date, end_date, daysOfWeek = [], range_start_time, range_end_time }) {
@@ -48,12 +95,9 @@ function sanitizePayload(body = {}) {
   if (payload.cost != null) payload.cost = Number(payload.cost);
   if (payload.students != null) payload.students = Number(payload.students);
   if (payload.materialsCost != null) payload.materialsCost = Number(payload.materialsCost);
-
-  // Support either string ids (e.g., "i1" or ObjectId as string)
   if (Array.isArray(payload.instructors)) {
     payload.instructors = payload.instructors.map((v) => String(v));
   }
-
   payload.instructorRates = normalizeInstructorRates(payload.instructorRates);
   return payload;
 }
@@ -83,6 +127,37 @@ function isOwner(course, userId) {
   return course?.owner && String(course.owner) === String(userId);
 }
 
+function ymd(d) {
+  const x = new Date(d);
+  if (Number.isNaN(x.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`;
+}
+
+/* ---------- Access helpers ---------- */
+async function resolveInstructorIdForUser(userId) {
+  const byUser = await Instructor.findOne({ user: userId }).select('_id').lean();
+  if (byUser) return String(byUser._id);
+
+  const u = await User.findById(userId).select('email').lean();
+  if (!u?.email) return null;
+
+  const byEmail = await Instructor.findOne({ email: u.email.toLowerCase() }).select('_id').lean();
+  return byEmail ? String(byEmail._id) : null;
+}
+
+// NEW: robust check for admin power
+async function userHasAdminPower(req) {
+  // roles may be on req.user (from JWT) or in DB
+  let roles = req.user?.roles;
+  if (!Array.isArray(roles) || roles.length === 0) {
+    const u = await User.findById(req.user._id).select('roles').lean();
+    roles = Array.isArray(u?.roles) ? u.roles : [];
+  }
+  const adminSet = new Set(['admin', 'owner', 'manager', 'staff']);
+  return roles.some(r => adminSet.has(String(r).toLowerCase()));
+}
+
 /* -------------------------------- Routes ----------------------------- */
 
 /**
@@ -100,6 +175,10 @@ function isOwner(course, userId) {
  *      * else (admin/staff)          -> scope to caller's tenant (owner = req.user._id).
  *  - no instructor: owner-scoped list (owner = req.user._id).
  */
+/**
+ * GET /api/courses
+ * Supports ?instructor=me|<id>, ?q, ?from, ?to, ?page, ?limit, ?sort
+ */
 router.get('/', verifyToken, async (req, res) => {
   try {
     const { page = 1, limit = 20, q, instructor, from, to, sort = '-createdAt' } = req.query;
@@ -108,41 +187,24 @@ router.get('/', verifyToken, async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const filter = {};
+    let instructorId = null;
+
     if (q) filter.$text = { $search: q };
 
     if (instructor) {
-      if (instructor === 'me') {
-        const meInst = await findInstructorForUser(req.user._id);
-        if (!meInst) {
-          return res.json({ page: pageNum, limit: limitNum, total: 0, items: [] });
-        }
-        // Instructor view: courses assigned to me, scoped to my tenant
-        filter.owner = meInst.owner;
-        filter.$or = [
-          { instructors: meInst.id },
-          { [`instructorRates.${meInst.id}`]: { $exists: true } },
-        ];
-      } else {
-        // Explicit instructor id
-        const targetId = String(instructor);
-        const meInst = await findInstructorForUser(req.user._id);
-        const callerIsThatInstructor = meInst && meInst.id === targetId;
+      instructorId = instructor === 'me'
+        ? await resolveInstructorIdForUser(req.user._id)
+        : String(instructor);
 
-        if (callerIsThatInstructor) {
-          // Instructor self: scope to their tenant
-          filter.owner = meInst.owner;
-        } else {
-          // Admin/staff: scope to caller's tenant
-          filter.owner = req.user._id;
-        }
-
-        filter.$or = [
-          { instructors: targetId },
-          { [`instructorRates.${targetId}`]: { $exists: true } },
-        ];
+      if (!instructorId) {
+        return res.json({ page: pageNum, limit: limitNum, total: 0, items: [] });
       }
+
+      filter.$or = [
+        { instructors: String(instructorId) },
+        { [`instructorRates.${String(instructorId)}`]: { $exists: true } },
+      ];
     } else {
-      // Owner mode: tenant isolation
       filter.owner = req.user._id;
     }
 
@@ -209,32 +271,15 @@ router.get('/instructors/:instructorId/courses', verifyToken, async (req, res) =
 
 /**
  * GET /api/courses/:id
- * Read if:
- *  - owner, OR
- *  - caller is an instructor assigned to this course (and same tenant)
+ * (owner OR assigned instructor)
  */
-router.get('/:id', verifyToken, async (req, res) => {
+router.get('/:id', verifyToken, canViewCourse, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id)
       .populate('owner', 'username email')
       .lean({ virtuals: true });
 
     if (!course) return res.status(404).json({ error: 'Not found' });
-
-    if (isOwner(course, req.user._id)) {
-      return res.json(course);
-    }
-
-    // For instructor, verify both assignment AND tenant match
-    const meInst = await findInstructorForUser(req.user._id);
-    if (!meInst) return res.status(403).json({ error: 'Forbidden' });
-    if (String(course.owner) !== String(meInst.owner)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-    if (!courseIncludesInstructor(course, meInst.id)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
     res.json(course);
   } catch (err) {
     res.status(500).json({ err: err.message });
@@ -243,25 +288,22 @@ router.get('/:id', verifyToken, async (req, res) => {
 
 /**
  * POST /api/courses
- * Create (owner only – scoped by setting owner to requester)
+ * (owner only)
  */
 router.post('/', verifyToken, async (req, res) => {
   try {
     const payload = sanitizePayload(req.body);
     if (req.user?._id) payload.owner = req.user._id;
 
-    // Auto-generate sessions if not provided
-    const needsGen =
-      (!Array.isArray(payload.courseDatesTimes) || payload.courseDatesTimes.length === 0) &&
-      payload.start_date && payload.end_date &&
-      Array.isArray(payload.daysOfWeek) && payload.daysOfWeek.length > 0;
-
-    if (needsGen) {
+    if ((!Array.isArray(payload.courseDatesTimes) || payload.courseDatesTimes.length === 0) &&
+        payload.start_date && payload.end_date &&
+        Array.isArray(payload.daysOfWeek) && payload.daysOfWeek.length > 0) {
       payload.courseDatesTimes = buildSessions(payload);
     }
 
     const item = await Course.create(payload);
     const populated = await item.populate('owner', 'username email');
+
     res.status(201).json(populated.toJSON({ virtuals: true }));
   } catch (err) {
     if (err.name === 'ValidationError') return res.status(400).json({ err: err.message });
@@ -271,7 +313,7 @@ router.post('/', verifyToken, async (req, res) => {
 
 /**
  * PUT /api/courses/:id
- * Update (owner only)
+ * (owner only)
  */
 router.put('/:id', verifyToken, async (req, res) => {
   try {
@@ -305,7 +347,7 @@ router.put('/:id', verifyToken, async (req, res) => {
 
 /**
  * PATCH /api/courses/:id
- * Partial update (owner only)
+ * (owner only)
  */
 router.patch('/:id', verifyToken, async (req, res) => {
   try {
@@ -339,7 +381,7 @@ router.patch('/:id', verifyToken, async (req, res) => {
 
 /**
  * DELETE /api/courses/:id
- * Delete (owner only)
+ * (owner only)
  */
 router.delete('/:id', verifyToken, async (req, res) => {
   try {
@@ -377,6 +419,103 @@ router.post('/:id/regenerate-sessions', verifyToken, async (req, res) => {
 
     const populated = await course.populate('owner', 'username email');
     res.json(populated.toJSON({ virtuals: true }));
+  } catch (err) {
+    res.status(500).json({ err: err.message });
+  }
+});
+
+/* ---------------------- NEW: Attendance endpoints ---------------------- */
+
+/**
+ * GET /api/courses/:id/attendance
+ * Returns { [instructorId]: string[] } of session keys.
+ * (owner OR assigned instructor)
+ */
+router.get('/:id/attendance', verifyToken, async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id).lean();
+    if (!course) return res.status(404).json({ error: 'Not found' });
+
+    if (!isOwner(course, req.user._id)) {
+      const myInstructorId = await resolveInstructorIdForUser(req.user._id);
+      if (!courseIncludesInstructor(course, myInstructorId)) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
+    // Ensure plain object of arrays
+    const map = {};
+    const att = course.attendance || {};
+    for (const [k, v] of Object.entries(att)) {
+      map[String(k)] = Array.isArray(v) ? v.map(String) : [];
+    }
+    return res.json(map);
+  } catch (err) {
+    res.status(500).json({ err: err.message });
+  }
+});
+
+/**
+ * PUT /api/courses/:id/attendance
+ * Owner: can set full map { [instructorId]: string[] }
+ * Instructor: can only set their own list (body can be array OR { [myId]: string[] })
+ */
+router.put('/:id/attendance', verifyToken, async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Not found' });
+
+    // Build allowed session keys (by date and by index fallback)
+    const sessions = Array.isArray(course.courseDatesTimes) ? course.courseDatesTimes : [];
+    const byDate = sessions.map((s) => ymd(s?.date));
+    const byIdx  = sessions.map((_, i) => `idx-${i}`);
+    const allowed = new Set([...byDate, ...byIdx]);
+
+    const sanitizeList = (arr) => {
+      const out = [];
+      const seen = new Set();
+      (Array.isArray(arr) ? arr : []).forEach((x) => {
+        const k = String(x || '');
+        if (!allowed.has(k)) return;
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push(k);
+      });
+      return out;
+    };
+
+    if (isOwner(course, req.user._id)) {
+      // Owner can replace the whole map
+      const incoming = req.body && typeof req.body === 'object' ? req.body : {};
+      const next = {};
+      for (const [insId, arr] of Object.entries(incoming)) {
+        next[String(insId)] = sanitizeList(arr);
+      }
+      course.attendance = next;
+      await course.save();
+      return res.json(course.attendance || {});
+    }
+
+    // Not owner: must be assigned instructor
+    const myInstructorId = await resolveInstructorIdForUser(req.user._id);
+    if (!courseIncludesInstructor(course, myInstructorId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Accept either an array (meaning "mine"), or an object with my id
+    let myList = [];
+    if (Array.isArray(req.body)) {
+      myList = sanitizeList(req.body);
+    } else if (req.body && typeof req.body === 'object') {
+      myList = sanitizeList(req.body[myInstructorId] || []);
+    }
+
+    const map = course.attendance || {};
+    map[String(myInstructorId)] = myList;
+    course.attendance = map;
+    await course.save();
+
+    return res.json({ [String(myInstructorId)]: myList });
   } catch (err) {
     res.status(500).json({ err: err.message });
   }

@@ -17,7 +17,8 @@ const FRONTEND_URL =
   process.env.FRONTEND_APP_URL ||
   process.env.APP_ORIGIN ||
   process.env.WEB_APP_URL ||
-  'http://localhost:5173';
+  'http://localhost:5173'|| 
+  'https://whale-app-2vav2.ondigitalocean.app';
 
 const toStr = (v) => (v == null ? '' : String(v));
 const sameId = (a, b) => String(a) === String(b);
@@ -132,6 +133,11 @@ router.post('/', verifyToken, async (req, res, next) => {
   try {
     const payload = sanitizeUpdatable(req.body);
     payload.owner = req.user._id;
+
+    if (!payload.email && !payload.name) {
+      return res.status(400).json({ err: 'name or email is required' });
+    }
+
     const doc = await Instructor.create(payload);
     res.status(201).json(doc);
   } catch (err) { next(err); }
@@ -226,7 +232,9 @@ router.post('/:id/invite', verifyToken, async (req, res, next) => {
     // Link instructor to this user if not yet linked
     if (!instr.user || String(instr.user) !== String(user._id)) {
       instr.user = user._id;
+      user.instructor = instr._id
       await instr.save();
+      await user.save();
     }
 
     // Create a single-use invite token
@@ -251,7 +259,8 @@ router.post('/:id/invite', verifyToken, async (req, res, next) => {
       process.env.FRONTEND_APP_URL ||
       process.env.APP_ORIGIN ||
       process.env.WEB_APP_URL ||
-      'http://localhost:5173';
+      'http://localhost:5173' ||
+      'https://whale-app-2vav2.ondigitalocean.app';
     const url = `${FRONTEND_URL.replace(/\/+$/, '')}/set-password?token=${encodeURIComponent(token)}`;
 
     return res.status(201).json({ url, expiresAt });

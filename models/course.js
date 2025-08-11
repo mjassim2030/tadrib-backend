@@ -83,6 +83,13 @@ const CourseSchema = new Schema(
       trim: true,
       enum: ['News', 'Games', 'Music', 'Movies', 'Sports', 'Television'], // align with UI
     },
+    attendance: { type: Map, of: [String], default: {} },
+
+    location: String,
+    location_lat: Number,
+    location_lon: Number,
+    location_place_id: String,
+
 
     // Date range + frequency
     start_date: { type: Date, required: true },

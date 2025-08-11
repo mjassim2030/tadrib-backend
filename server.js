@@ -39,6 +39,7 @@ const authRouter = require('./controllers/auth');
 const userRouter = require('./controllers/users');
 const courseRouter = require("./controllers/courses.js");
 const instructorRouter = require("./controllers/instructors.js");
+const billingRoutes = require('./controllers/billing');
 
 // GET
 app.get('/healthz', (req, res) => res.status(200).json({ status: 'ok' }));
@@ -48,6 +49,22 @@ app.use('/users', userRouter);
 app.use('/test-jwt', testJwtRouter);
 app.use("/courses", courseRouter);
 app.use("/instructors", instructorRouter);
+app.use('/billing', express.json(), billingRoutes); 
+
+app.use((err, req, res, next) => {
+  // Mongoose validation
+  if (err?.name === 'ValidationError') {
+    return res.status(400).json({ err: err.message });
+  }
+
+  // Duplicate key
+  if (err?.code === 11000) {
+    return res.status(409).json({ err: 'Duplicate value', key: err.keyValue });
+  }
+
+  console.error(err);
+  return res.status(500).json({ err: err.message || 'Internal Server Error' });
+});
 
 app.listen(port, () => {
   console.log(`The express app is ready and running on port ${port}!`);

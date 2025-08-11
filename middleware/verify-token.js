@@ -1,22 +1,37 @@
-// We'll need to import jwt to use the verify method
+// middleware/verify-token.js
 const jwt = require('jsonwebtoken');
 
 function verifyToken(req, res, next) {
   try {
-    const token = req.headers.authorization.split(' ')[1];
+    const auth = req.headers.authorization || '';
+    if (!auth.startsWith('Bearer ')) {
+      return res.status(401).json({ err: 'Missing Bearer token.' });
+    }
+
+    const token = auth.slice(7).trim();
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Assign decoded payload to req.user
-    req.user = decoded.payload;
-    console.log(req.user)
+    // Support BOTH shapes:
+    // 1) Old: { payload: { _id, username, roles? } }
+    // 2) New: { _id? uid? sub?, username?, roles? }
+    const src =
+      decoded && typeof decoded === 'object' && decoded.payload && typeof decoded.payload === 'object'
+        ? decoded.payload
+        : decoded;
 
-    // Call next() to invoke the next middleware function
-    next();
+    const _id = String(src._id || src.uid || src.sub || '');
+    if (!_id) return res.status(401).json({ err: 'Invalid token payload.' });
+
+    const roles = Array.isArray(src.roles) ? src.roles.map(r => String(r).toLowerCase()) : [];
+    const username = src.username || src.email || null;
+
+    // Normalized user object used by your routers:
+    req.user = { _id, username, roles };
+
+    return next();
   } catch (err) {
-    // If any errors, send back a 401 status and an 'Invalid token.' error message
-    res.status(401).json({ err: 'Invalid token.' });
+    return res.status(401).json({ err: 'Invalid token.' });
   }
 }
 
-// We'll need to export this function to use it in our controller files
 module.exports = verifyToken;
